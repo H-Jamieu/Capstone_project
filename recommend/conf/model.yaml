@@ -1,0 +1,4 @@
+dnn:
+  hidden_units: [32, 8]
+  activation: relu
+  dropout_rate: 0.1
