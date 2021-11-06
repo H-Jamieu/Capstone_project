@@ -156,7 +156,7 @@ class CFModel(object):
           ax.legend()
       return results
 
-def build_model(embedding_dim=3, init_stddev=1.):
+def build_model(train, test, embedding_dim=3, init_stddev=1.):
   """
   Args:
     ratings: a DataFrame of the ratings
@@ -166,7 +166,7 @@ def build_model(embedding_dim=3, init_stddev=1.):
     model: a CFModel.
   """
   # Split the ratings DataFrame into train and test.
-  train_ratings, test_ratings = pd.read_csv('Data/User_data/train_syn_5000.csv'), pd.read_csv('Data/User_data/test_syn_5000.csv')
+  train_ratings, test_ratings = train, test
   # SparseTensor representation of the train and test datasets.
   A_train = build_rating_sparse_tensor(train_ratings)
   A_test = build_rating_sparse_tensor(test_ratings)
@@ -208,19 +208,41 @@ def compute_scores(query_embedding, item_embeddings, measure=DOT):
   scores = u.dot(V.T)
   return scores
 
-def user_recommendations(model, measure=DOT, exclude_rated=True, k=6):
+def user_recommendations(model, uid,measure=DOT):
     scores = compute_scores(
-        model.embeddings["userId"][943], model.embeddings["movie_id"], measure)
-    score_key = measure + ' score'
-    df = pd.DataFrame({
-        score_key: list(scores),
-        'movie_id': movies['movie_id'],
-    })
-    if exclude_rated:
-        # remove movies that are already rated
-        rated_movies = ratings[ratings.user_id == "943"]["movie_id"].values
-        df = df[df.movie_id.apply(lambda movie_id: movie_id not in rated_movies)]
-    display.display(df.sort_values([score_key], ascending=False).head(k))
+        model.embeddings["userId"][uid], model.embeddings["movieId"])
+    return scores
+    # if exclude_rated:
+    #     # remove movies that are already rated
+    #     rated_movies = ratings[ratings.user_id == "943"]["movie_id"].values
+    #     df = df[df.movie_id.apply(lambda movie_id: movie_id not in rated_movies)]
+    # display.display(df.sort_values([score_key], ascending=False).head(k))
+
+#development target:
+# 1. output a predicted rating of user for their unwatched movies (scaled into (0,5) range)
+# 2. output a mean square error for test set so that we can have an inference of rating
+# 3. change the input into scaled form
+
+def normalize(rl):
+    minum = min(rl)
+    maxim = max(rl)
+    normed = [5*(r-minum)/(maxim-minum) for r in rl]
+    return normed
+
+
+def generate_recommendation(model, users, full_rate, movies):
+    # Users and movies kept the original order in the dataframe
+    # user, movie ,rating format
+    rating_opt = []
+    for u in users:
+        ratings = normalize(user_recommendations(model, u))
+        rated = full_rate[full_rate.userId == u]['movieId'].values
+        for r in range(0,ratings):
+            if movies[r] not in rated:
+                rating_opt.append([u,movies[r]])
+    return rating_opt
+
+
 
 
 def stat_anla(scores):
@@ -231,11 +253,13 @@ def stat_anla(scores):
     print('Min is '+ str(minum))
     print('Avergae is '+ str(average))
 
-model = build_model(embedding_dim=13, init_stddev=0.6)
+train_ratings, test_ratings = pd.read_csv('Data/User_data/train_syn_5000.csv'), pd.read_csv('Data/User_data/test_syn_5000.csv')
+users = train_ratings['userId'].unique()
+movies = train_ratings['movieId'].unique()
+model = build_model(train_ratings, test_ratings, embedding_dim=13, init_stddev=0.6)
 model.train(num_iterations=10000, learning_rate=10.)
-scores = compute_scores(
-        model.embeddings["userId"][943], model.embeddings["movieId"])
-stat_anla(scores)
+
+print(generate_recommendation(model, users, train_ratings, movies))
 
 
 
