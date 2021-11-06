@@ -11,6 +11,8 @@ import sklearn.manifold
 import tensorflow.compat.v1 as tf
 tf.disable_v2_behavior()
 tf.logging.set_verbosity(tf.logging.ERROR)
+import os
+import csv
 
 
 def build_rating_matrix(df, scale = 0):
@@ -72,7 +74,7 @@ def sparse_mean_square_error(sparse_ratings, user_embeddings, movie_embeddings):
       model's predictions.
   """
   predictions = tf.gather_nd(
-      tf.matmul(user_embeddings, movie_embeddings, transpose_b=True),
+      tf.matmul(movie_embeddings, user_embeddings, transpose_b=True),
       sparse_ratings.indices)
   loss = tf.losses.mean_squared_error(sparse_ratings.values, predictions)
   return loss
@@ -205,12 +207,12 @@ def compute_scores(query_embedding, item_embeddings, measure=DOT):
   if measure == COSINE:
     V = V / np.linalg.norm(V, axis=1, keepdims=True)
     u = u / np.linalg.norm(u)
-  scores = u.dot(V.T)
+  scores = V.dot(u.T)
   return scores
 
-def user_recommendations(model, uid,measure=DOT):
+def user_recommendations(model, mid,measure=DOT):
     scores = compute_scores(
-        model.embeddings["userId"][uid], model.embeddings["movieId"])
+        model.embeddings["userId"], model.embeddings["movieId"][mid])
     return scores
     # if exclude_rated:
     #     # remove movies that are already rated
@@ -234,16 +236,21 @@ def generate_recommendation(model, users, full_rate, movies):
     # Users and movies kept the original order in the dataframe
     # user, movie ,rating format
     rating_opt = []
-    for u in users:
-        ratings = normalize(user_recommendations(model, u))
-        rated = full_rate[full_rate.userId == u]['movieId'].values
-        for r in range(0,ratings):
-            if movies[r] not in rated:
-                rating_opt.append([u,movies[r]])
+    for m in range(0,len(movies)):
+        ratings = normalize(user_recommendations(model, m))
+        rated = full_rate[full_rate.movieId == m]['userId'].values
+        for r in range(0, len(ratings)):
+            if users[r] not in rated:
+                rating_opt.append([m, users[r], ratings[r]])
     return rating_opt
 
-
-
+def to_output(list_in):
+    first_row = ['movieId','userId','rating']
+    with open('Data/Predictions/out_syn_5000.csv', 'w', newline='') as pred:
+        wr = csv.writer(pred)
+        wr.writerow(first_row)
+        wr.writerows(list_in)
+    pred.close()
 
 def stat_anla(scores):
     maxim = max(scores)
@@ -256,10 +263,15 @@ def stat_anla(scores):
 train_ratings, test_ratings = pd.read_csv('Data/User_data/train_syn_5000.csv'), pd.read_csv('Data/User_data/test_syn_5000.csv')
 users = train_ratings['userId'].unique()
 movies = train_ratings['movieId'].unique()
-model = build_model(train_ratings, test_ratings, embedding_dim=13, init_stddev=0.6)
-model.train(num_iterations=10000, learning_rate=10.)
 
-print(generate_recommendation(model, users, train_ratings, movies))
+
+model = build_model(train_ratings, test_ratings, embedding_dim=100, init_stddev=0.6)
+model.train(num_iterations=20000, learning_rate=8.)
+output = generate_recommendation(model, users, train_ratings, movies)
+print(output[:20])
+to_output(output)
+
+
 
 
 
