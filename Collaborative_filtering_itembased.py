@@ -15,6 +15,11 @@ import os
 import csv
 
 
+DICT_M = {}
+DICT_U = {}
+DICT_MR = {}
+DICT_UR = {}
+
 def build_rating_matrix(df, scale = 0):
     """
     for building matrix in movie - rating - user form
@@ -45,6 +50,15 @@ def scale_score(df, flag= 0):
 def cosine_simularity():
     return 0
 
+def map_index(movies, users):
+    seq_m = list(np.arange(0, len(movies)))
+    seq_u = list(np.arange(0, len(users)))
+    dict_m = dict(zip(movies, seq_m))
+    dict_u = dict(zip(users, seq_u))
+    dict_mr = dict(zip(seq_m, movies))
+    dict_ur = dict(zip(seq_u, users))
+    return dict_m, dict_u, dict_mr, dict_ur
+
 def build_rating_sparse_tensor(ratings_df):
   """
   Args:
@@ -56,10 +70,13 @@ def build_rating_sparse_tensor(ratings_df):
   values = ratings_df['rating'].values
   movies = ratings_df['movieId'].unique()
   users = ratings_df['userId'].unique()
+  for i in indices:
+      i[0] = DICT_M[i[0]]
+      i[1] = DICT_U[i[1]]
   return tf.SparseTensor(
       indices=indices,
       values=values,
-      dense_shape=[users.shape[0], movies.shape[0]])
+      dense_shape=[movies.shape[0],users.shape[0]])
 
 def sparse_mean_square_error(sparse_ratings, user_embeddings, movie_embeddings):
   """
@@ -73,9 +90,13 @@ def sparse_mean_square_error(sparse_ratings, user_embeddings, movie_embeddings):
     A scalar Tensor representing the MSE between the true ratings and the
       model's predictions.
   """
-  predictions = tf.gather_nd(
-      tf.matmul(movie_embeddings, user_embeddings, transpose_b=True),
-      sparse_ratings.indices)
+  # predictions = tf.gather_nd(
+  #     tf.matmul(movie_embeddings, user_embeddings, transpose_b=True),
+  #     sparse_ratings.indices)
+  predictions = tf.reduce_sum(
+      tf.gather(movie_embeddings, sparse_ratings.indices[:, 0]) *
+      tf.gather(user_embeddings, sparse_ratings.indices[:, 1]),
+      axis=1)
   loss = tf.losses.mean_squared_error(sparse_ratings.values, predictions)
   return loss
 
@@ -212,7 +233,7 @@ def compute_scores(query_embedding, item_embeddings, measure=DOT):
 
 def user_recommendations(model, mid,measure=DOT):
     scores = compute_scores(
-        model.embeddings["userId"], model.embeddings["movieId"][mid])
+        model.embeddings["movieId"][mid], model.embeddings["userId"])
     return scores
     # if exclude_rated:
     #     # remove movies that are already rated
@@ -236,17 +257,18 @@ def generate_recommendation(model, users, full_rate, movies):
     # Users and movies kept the original order in the dataframe
     # user, movie ,rating format
     rating_opt = []
-    for m in range(0,len(movies)):
-        ratings = normalize(user_recommendations(model, m))
-        rated = full_rate[full_rate.movieId == m]['userId'].values
-        for r in range(0, len(ratings)):
-            if users[r] not in rated:
-                rating_opt.append([m, users[r], ratings[r]])
+    for m in range(0, len(movies)/1000):
+        ratings = user_recommendations(model, m)
+        print(ratings)
+        # rated = full_rate[full_rate.movieId == m]['userId'].values
+        # for r in range(0, len(ratings)):
+        #     if movies[r] not in rated:
+        #         rating_opt.append([movies[m], users[r], ratings[r]])
     return rating_opt
 
-def to_output(list_in):
+def to_output(list_in,flag):
     first_row = ['movieId','userId','rating']
-    with open('Data/Predictions/out_syn_5000.csv', 'w', newline='') as pred:
+    with open('Data/Predictions/out_'+flag+'_5000.csv', 'w', newline='') as pred:
         wr = csv.writer(pred)
         wr.writerow(first_row)
         wr.writerows(list_in)
@@ -260,16 +282,26 @@ def stat_anla(scores):
     print('Min is '+ str(minum))
     print('Avergae is '+ str(average))
 
-train_ratings, test_ratings = pd.read_csv('Data/User_data/train_syn_5000.csv'), pd.read_csv('Data/User_data/test_syn_5000.csv')
+flag = 'syn'
+train_ratings, test_ratings = pd.read_csv('Data/User_data/train_'+flag+'_5000.csv'), pd.read_csv('Data/User_data/test_'+flag+'_5000.csv')
+train_ratings = train_ratings.sort_values(by =['movieId','userId'])
+test_ratings = test_ratings.sort_values(by=['movieId','userId'])
 users = train_ratings['userId'].unique()
 movies = train_ratings['movieId'].unique()
 
+DICT_M, DICT_U, DICT_MR, DICT_UR = map_index(movies, users)
 
-model = build_model(train_ratings, test_ratings, embedding_dim=100, init_stddev=0.6)
-model.train(num_iterations=20000, learning_rate=8.)
+# sparse_test = build_rating_sparse_tensor(test_ratings)
+# with tf.Session() as sess:
+#     sess.run(sparse_test) #execute init_op
+#     #print the random values that we sample
+#     print (sess.run(sparse_test))
+
+model = build_model(train_ratings, test_ratings, embedding_dim=20, init_stddev=0.6)
+model.train(num_iterations=2000, learning_rate=8.)
 output = generate_recommendation(model, users, train_ratings, movies)
 print(output[:20])
-to_output(output)
+to_output(output,flag)
 
 
 
