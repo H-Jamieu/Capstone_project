@@ -13,7 +13,7 @@ tf.disable_v2_behavior()
 tf.logging.set_verbosity(tf.logging.ERROR)
 import os
 import csv
-import tqdm
+from tqdm import tqdm
 
 
 DICT_M = {}
@@ -270,12 +270,12 @@ def naive_normlize(scores):
     return normed
 
 
-def generate_recommendation(model, users, full_rate, movies):
+def generate_recommendation(model,  full_rate):
     # Users and movies kept the original order in the dataframe
     # user, movie ,rating format
     rating_opt = []
     ratings = user_recommendations(model)
-    for row in range(0,len(ratings)):
+    for row in tqdm(range(0, len(ratings))):
         mid = DICT_MR[row]
         rated = full_rate[full_rate.movieId == mid]['userId'].values
         normed_scores = naive_normlize(ratings[row])
@@ -289,9 +289,55 @@ def generate_recommendation(model, users, full_rate, movies):
         #         rating_opt.append([mid, uid, ratings[r]])
     return rating_opt
 
-def to_output(list_in,flag):
+def gravity(U, V):
+  """Creates a gravity loss given two embedding matrices."""
+  return 1. / (U.shape[0].value*V.shape[0].value) * tf.reduce_sum(
+      tf.matmul(U, U, transpose_a=True) * tf.matmul(V, V, transpose_a=True))
+
+def build_regularized_model(
+    train ,test, embedding_dim=3, regularization_coeff=.1, gravity_coeff=1.,
+    init_stddev=0.1):
+  """
+  Args:
+    ratings: the DataFrame of movie ratings.
+    embedding_dim: The dimension of the embedding space.
+    regularization_coeff: The regularization coefficient lambda.
+    gravity_coeff: The gravity regularization coefficient lambda_g.
+  Returns:
+    A CFModel object that uses a regularized loss.
+  """
+  # Split the ratings DataFrame into train and test.
+  train_ratings, test_ratings = train, test
+  # SparseTensor representation of the train and test datasets.
+  A_train = build_rating_sparse_tensor(train_ratings)
+  A_test = build_rating_sparse_tensor(test_ratings)
+  U = tf.Variable(tf.random_normal(
+      [A_train.dense_shape[0], embedding_dim], stddev=init_stddev))
+  V = tf.Variable(tf.random_normal(
+      [A_train.dense_shape[1], embedding_dim], stddev=init_stddev))
+
+  error_train = sparse_mean_square_error(A_train, U, V)
+  error_test = sparse_mean_square_error(A_test, U, V)
+  gravity_loss = gravity_coeff * gravity(U, V)
+  regularization_loss = regularization_coeff * (
+      tf.reduce_sum(U*U)/U.shape[0].value + tf.reduce_sum(V*V)/V.shape[0].value)
+  total_loss = error_train + regularization_loss + gravity_loss
+  losses = {
+      'train_error_observed': error_train,
+      'test_error_observed': error_test,
+  }
+  loss_components = {
+      'observed_loss': error_train,
+      'regularization_loss': regularization_loss,
+      'gravity_loss': gravity_loss,
+  }
+  embeddings = {"movieId": U, "userId": V}
+
+  return CFModel(embeddings, total_loss, [losses, loss_components])
+
+def to_output(list_in,flag,mod):
     first_row = ['movieId','userId','rating']
-    with open('Data/Predictions/out_'+flag+'_5000.csv', 'w', newline='') as pred:
+    with open('Data/Predictions/out_'+flag+'_'+mod+'_'+'_5000.csv', 'w', newline='') as pred:
         wr = csv.writer(pred)
         wr.writerow(first_row)
         wr.writerows(list_in)
@@ -305,7 +351,11 @@ def stat_anla(scores):
     print('Min is '+ str(minum))
     print('Avergae is '+ str(average))
 
+
+
+
 flag = 'top'
+mod = 'reg'
 train_ratings, test_ratings = pd.read_csv('Data/User_data/train_'+flag+'_5000.csv'), pd.read_csv('Data/User_data/test_'+flag+'_5000.csv')
 train_ratings = train_ratings.sort_values(by =['movieId','userId'])
 test_ratings = test_ratings.sort_values(by=['movieId','userId'])
@@ -328,11 +378,11 @@ DICT_M, DICT_U, DICT_MR, DICT_UR = map_index(movies, users)
 #     #print the random values that we sample
 #     print (sess.run(sparse_test))
 
-model = build_model(train_ratings, test_ratings, embedding_dim=28, init_stddev=0.6)
-model.train(num_iterations=20000, learning_rate=0.4)
-output = generate_recommendation(model, users, train_ratings, movies)
+model = build_regularized_model(train_ratings, test_ratings, embedding_dim=36, init_stddev=0.6)
+model.train(num_iterations=24000, learning_rate=0.4)
+output = generate_recommendation(model,  train_ratings)
 print(output[:20])
-to_output(output,flag)
+to_output(output, flag, mod)
 
 
 
