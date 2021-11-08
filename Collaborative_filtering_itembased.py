@@ -13,6 +13,7 @@ tf.disable_v2_behavior()
 tf.logging.set_verbosity(tf.logging.ERROR)
 import os
 import csv
+import tqdm
 
 
 DICT_M = {}
@@ -78,7 +79,7 @@ def build_rating_sparse_tensor(ratings_df):
       values=values,
       dense_shape=[movies.shape[0],users.shape[0]])
 
-def sparse_mean_square_error(sparse_ratings, user_embeddings, movie_embeddings):
+def sparse_mean_square_error(sparse_ratings, user_embeddings,movie_embeddings):
   """
   Args:
     sparse_ratings: A SparseTensor rating matrix, of dense_shape [N, M]
@@ -90,13 +91,13 @@ def sparse_mean_square_error(sparse_ratings, user_embeddings, movie_embeddings):
     A scalar Tensor representing the MSE between the true ratings and the
       model's predictions.
   """
-  # predictions = tf.gather_nd(
-  #     tf.matmul(movie_embeddings, user_embeddings, transpose_b=True),
-  #     sparse_ratings.indices)
-  predictions = tf.reduce_sum(
-      tf.gather(movie_embeddings, sparse_ratings.indices[:, 0]) *
-      tf.gather(user_embeddings, sparse_ratings.indices[:, 1]),
-      axis=1)
+  predictions = tf.gather_nd(
+      tf.matmul(movie_embeddings, user_embeddings, transpose_b=True),
+      sparse_ratings.indices)
+  # predictions = tf.reduce_sum(
+  #     tf.gather(movie_embeddings, sparse_ratings.indices[:, 0]) *
+  #     tf.gather(user_embeddings, sparse_ratings.indices[:, 1]),
+  #     axis=1)
   loss = tf.losses.mean_squared_error(sparse_ratings.values, predictions)
   return loss
 
@@ -205,8 +206,8 @@ def build_model(train, test, embedding_dim=3, init_stddev=1.):
       'test_error': test_loss
   }
   embeddings = {
-      "userId": U,
-      "movieId": V
+      "movieId": U,
+      "userId": V
   }
   return CFModel(embeddings, train_loss, [metrics])
 
@@ -228,12 +229,12 @@ def compute_scores(query_embedding, item_embeddings, measure=DOT):
   if measure == COSINE:
     V = V / np.linalg.norm(V, axis=1, keepdims=True)
     u = u / np.linalg.norm(u)
-  scores = V.dot(u.T)
+  scores = u.dot(V.T)
   return scores
 
-def user_recommendations(model, mid,measure=DOT):
+def user_recommendations(model,measure=COSINE):
     scores = compute_scores(
-        model.embeddings["movieId"][mid], model.embeddings["userId"])
+        model.embeddings["movieId"], model.embeddings["userId"])
     return scores
     # if exclude_rated:
     #     # remove movies that are already rated
@@ -246,10 +247,26 @@ def user_recommendations(model, mid,measure=DOT):
 # 2. output a mean square error for test set so that we can have an inference of rating
 # 3. change the input into scaled form
 
-def normalize(rl):
-    minum = min(rl)
-    maxim = max(rl)
-    normed = [5*(r-minum)/(maxim-minum) for r in rl]
+def denormalize(rl, mid, ratings):
+    #Relu-like normlization
+    normed = []
+    maxr = ratings.query('movieId=='+str(mid))['movie_rating_max'].iloc[0]
+    minr = ratings.query('movieId==' + str(mid))['movie_rating_min'].iloc[0]
+    avgr = ratings.query('movieId==' + str(mid))['movie_rating_mean'].iloc[0]
+    for r in rl:
+        rnormed = 5*r+avgr
+        if rnormed>maxr:
+            rnormed=maxr
+        if rnormed<minr:
+            rnormed = minr
+        normed.append(rnormed)
+    return normed
+
+
+def naive_normlize(scores):
+    maxs = max(scores)
+    mins = min(scores)
+    normed = [ 5*(s-mins)/(maxs-mins) for s in scores]
     return normed
 
 
@@ -257,13 +274,19 @@ def generate_recommendation(model, users, full_rate, movies):
     # Users and movies kept the original order in the dataframe
     # user, movie ,rating format
     rating_opt = []
-    for m in range(0, len(movies)/1000):
-        ratings = user_recommendations(model, m)
-        print(ratings)
-        # rated = full_rate[full_rate.movieId == m]['userId'].values
+    ratings = user_recommendations(model)
+    for row in range(0,len(ratings)):
+        mid = DICT_MR[row]
+        rated = full_rate[full_rate.movieId == mid]['userId'].values
+        normed_scores = naive_normlize(ratings[row])
+        for u in range(0 ,len(ratings[row])):
+            uid = DICT_UR[u]
+            if u not in rated:
+                rating_opt.append([mid, uid, normed_scores[u]])
         # for r in range(0, len(ratings)):
-        #     if movies[r] not in rated:
-        #         rating_opt.append([movies[m], users[r], ratings[r]])
+        #     uid = DICT_UR[r]
+        #     if uid not in rated:
+        #         rating_opt.append([mid, uid, ratings[r]])
     return rating_opt
 
 def to_output(list_in,flag):
@@ -282,10 +305,18 @@ def stat_anla(scores):
     print('Min is '+ str(minum))
     print('Avergae is '+ str(average))
 
-flag = 'syn'
+flag = 'top'
 train_ratings, test_ratings = pd.read_csv('Data/User_data/train_'+flag+'_5000.csv'), pd.read_csv('Data/User_data/test_'+flag+'_5000.csv')
 train_ratings = train_ratings.sort_values(by =['movieId','userId'])
 test_ratings = test_ratings.sort_values(by=['movieId','userId'])
+train_ratings['movie_rating_mean'] = train_ratings.groupby('movieId')['rating'].transform('mean')
+train_ratings['movie_rating_max'] = train_ratings.groupby('movieId')['rating'].transform('max')
+train_ratings['movie_rating_min'] = train_ratings.groupby('movieId')['rating'].transform('min')
+train_ratings['normalized_rating'] = (train_ratings['rating'] - train_ratings['movie_rating_mean'])/5
+test_ratings['movie_rating_mean'] = test_ratings.groupby('movieId')['rating'].transform('mean')
+test_ratings['movie_rating_max'] = test_ratings.groupby('movieId')['rating'].transform('max')
+test_ratings['movie_rating_min'] = test_ratings.groupby('movieId')['rating'].transform('min')
+test_ratings['normalized_rating'] = (test_ratings['rating'] - test_ratings['movie_rating_mean'])/5
 users = train_ratings['userId'].unique()
 movies = train_ratings['movieId'].unique()
 
@@ -297,8 +328,8 @@ DICT_M, DICT_U, DICT_MR, DICT_UR = map_index(movies, users)
 #     #print the random values that we sample
 #     print (sess.run(sparse_test))
 
-model = build_model(train_ratings, test_ratings, embedding_dim=20, init_stddev=0.6)
-model.train(num_iterations=2000, learning_rate=8.)
+model = build_model(train_ratings, test_ratings, embedding_dim=28, init_stddev=0.6)
+model.train(num_iterations=20000, learning_rate=0.4)
 output = generate_recommendation(model, users, train_ratings, movies)
 print(output[:20])
 to_output(output,flag)
