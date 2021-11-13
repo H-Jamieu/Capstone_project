@@ -354,7 +354,7 @@ def stat_anla(scores):
 
 
 
-flag = 'top'
+flag = 'syn'
 mod = 'reg'
 train_ratings, test_ratings = pd.read_csv('Data/User_data/train_'+flag+'_5000.csv'), pd.read_csv('Data/User_data/test_'+flag+'_5000.csv')
 train_ratings = train_ratings.sort_values(by =['movieId','userId'])
