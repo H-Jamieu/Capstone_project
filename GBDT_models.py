@@ -34,7 +34,7 @@ def reduce_mem(df, cols):
     return df
 
 
-flag = 'top'
+flag = 'syn'
 TRAIN_PATH = 'Data/User_data/train_'+flag+'_5000.csv'
 TEST_PATH = 'Data/User_data/test_'+flag+'_5000.csv'
 ALL_unwatched = 'Data/Predictions/out_'+flag+'_5000.csv'
