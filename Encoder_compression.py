@@ -9,12 +9,11 @@ from tensorflow.keras.layers import Dense, Dropout
 from sklearn.model_selection import train_test_split
 from tensorflow.keras.losses import MeanSquaredLogarithmicError
 
-TRAIN_DATA_PATH = 'Data/movie_data/tag_occurance.csv'
+TRAIN_DATA_PATH = 'Data/movie_data/raw_embeddings.csv'
 
-train_data = pd.read_csv(TRAIN_DATA_PATH)
-id_cols = ['tagId','movieId']
+train_data = pd.read_csv(TRAIN_DATA_PATH, header=None)
 
-x_train = train_data[~id_cols]
+x_train = train_data.loc[:,train_data.columns[1:]]
 
 
 
@@ -27,7 +26,7 @@ class AutoEncoders(Model):
                 Dense(1024, activation="relu"),
                 Dense(512, activation="relu"),
                 Dense(256, activation="relu"),
-                Dense(64, activation="relu")
+                Dense(64, activation="relu"),
             ]
         )
 
@@ -40,30 +39,30 @@ class AutoEncoders(Model):
                 Dense(output_units, activation="sigmoid")
             ]
         )
-
-
-def call(self, inputs):
-    encoded = self.encoder(inputs)
-    decoded = self.decoder(encoded)
-    return decoded
+    def call(self, inputs):
+        encoded = self.encoder(inputs)
+        decoded = self.decoder(encoded)
+        return decoded
 
 
 auto_encoder = AutoEncoders(len(x_train.columns))
 
 auto_encoder.compile(
-    loss='mae',
-    metrics=['mae'],
+    loss='mse',
+    metrics=['mse'],
     optimizer='adam'
 )
 
 history = auto_encoder.fit(
     x_train,
     x_train,
-    epochs=230,
-    batch_size=128,
+    epochs=100,
+    batch_size=512,
     validation_data=(x_train, x_train)
 )
 
 encoder_layer = auto_encoder.get_layer('sequential')
 reduced_df = pd.DataFrame(encoder_layer.predict(x_train))
 reduced_df = reduced_df.add_prefix('feature_')
+reduced_df['movieID'] = train_data.loc[:,train_data.columns[0]]
+reduced_df.to_csv('Data/Movie_data/reduced_embeddings.csv')
